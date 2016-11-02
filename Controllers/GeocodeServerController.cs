@@ -634,7 +634,7 @@ namespace GeoREST.Controllers
 
             if (this.queryParams.outSR != null && (x != 0 && y != 0))
             {
-                HttpWebRequest requestSR = WebRequest.CreateHttp("http://tasks.arcgisonline.com/ArcGIS/rest/services/Geometry/GeometryServer/project?inSR=4236&outSR=" + this.queryParams.outSR + "&f=json&geometries=" + x + "," + y);
+                HttpWebRequest requestSR = WebRequest.CreateHttp("http://tasks.arcgisonline.com/ArcGIS/rest/services/Geometry/GeometryServer/project?inSR=4326&outSR=" + this.queryParams.outSR + "&f=json&geometries=" + x + "," + y);
 
                 using (HttpWebResponse responseSR = requestSR.GetResponse() as HttpWebResponse)
                 {
