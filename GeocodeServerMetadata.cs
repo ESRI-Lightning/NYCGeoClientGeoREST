@@ -23,7 +23,6 @@ namespace GeoREST
       public int length { get; set; }
     }
 
-
     public class CandidateField
     {
         public string name { get; set; }
