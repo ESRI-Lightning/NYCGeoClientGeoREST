@@ -7,6 +7,8 @@ using System.Net.Http;
 using System.Runtime.Serialization.Json;
 using System.Web.Http;
 using System.Configuration;
+using System.Dynamic;
+using Newtonsoft.Json;
 
 namespace GeoREST.Controllers
 {
@@ -14,7 +16,7 @@ namespace GeoREST.Controllers
     {
         private QueryParams queryParams;
         private string GeoClientAPIURL = "https://api.cityofnewyork.us/geoclient/v1/";
-        private bool nullResult = false;
+        //private bool nullResult = false;
         //private string format = "html";
 
         public GeocodeServerController()
@@ -103,8 +105,7 @@ namespace GeoREST.Controllers
         public HttpResponseMessage findCandidates(string action)
         {
             string errMsg = "";
-            this.nullResult = false;
-
+          
             var query = this.Request.GetQueryNameValuePairs();
             var q = this.Request.RequestUri;
 
@@ -369,8 +370,7 @@ namespace GeoREST.Controllers
         private string serializeCandidates(object result)
         {
             double lat = 0, lon = 0;
-            Candidate candidate = null;
-            GeocoderFindResult geoResult = null;
+            string address = "", locType = "GeoClient";
 
             SpatialReference spatialReference = new SpatialReference();
             spatialReference.wkid = this.queryParams.outWkid;
@@ -381,132 +381,68 @@ namespace GeoREST.Controllers
                 case "Place":
                     lat = (result as Place).latitude;
                     lon = (result as Place).longitude;
-                    if (lat == 0 || lon == 0)
-                        this.nullResult = true;
-                    else
-                    {
-                        candidate = new CandidatePlace();
-                        candidate.score = 100;
-                        candidate.address = (result as Place).firstStreetNameNormalized + ", " + (result as Place).firstBoroughName;
-                        (candidate as CandidatePlace).attributes = (Place)result;
-                        (candidate as CandidatePlace).attributes.Loc_name = "GeoClient Place";
-                        candidate.location = ensureWebMeractor(lon, lat);
-                        geoResult = new FindResultPlace();
-                        geoResult.spatialReference = spatialReference;
-                        (geoResult as FindResultPlace).candidates = new List<CandidatePlace>();
-                        (geoResult as FindResultPlace).candidates.Add(candidate as CandidatePlace);
-                    }
+                    address = (result as Place).firstStreetNameNormalized + ", " + (result as Place).firstBoroughName;
+                    locType += " Place";
                     break;
                 case "BBL":
                     lat = (result as BBL).latitudeInternalLabel;
                     lon = (result as BBL).longitudeInternalLabel;
-                    if (lat == 0 || lon == 0)
-                        this.nullResult = true;
-                    else
-                    {
-                        candidate = new CandidateBBL();
-                        candidate.score = 100;
-                        candidate.address = (result as BBL).bbl + ", " + (result as BBL).firstBoroughName;
-                        (candidate as CandidateBBL).attributes = (BBL)result;
-                        (candidate as CandidateBBL).attributes.Loc_name = "GeoClient BBL";
-                        candidate.location = ensureWebMeractor(lon, lat);
-                        geoResult = new FindResultBBL();
-                        geoResult.spatialReference = spatialReference;
-                        (geoResult as FindResultBBL).candidates = new List<CandidateBBL>();
-                        (geoResult as FindResultBBL).candidates.Add(candidate as CandidateBBL);
-                    }
+                    address = (result as BBL).bbl + ", " + (result as BBL).firstBoroughName;
+                    locType += " BBL";
                     break;
                 case "BIN":
                     lat = (result as BIN).latitudeInternalLabel;
                     lon = (result as BIN).longitudeInternalLabel;
-                    if (lat == 0 || lon == 0)
-                        this.nullResult = true;
-                    else
-                    {
-                        candidate = new CandidateBIN();
-                        candidate.score = 100;
-                        candidate.address = (result as BIN).buildingIdentificationNumber + ", " + (result as BIN).firstBoroughName;
-                        (candidate as CandidateBIN).attributes = (BIN)result;
-                        (candidate as CandidateBIN).attributes.Loc_name = "GeoClient BIN";
-                        candidate.location = ensureWebMeractor(lon, lat);
-                        geoResult = new FindResultBIN();
-                        geoResult.spatialReference = spatialReference;
-                        (geoResult as FindResultBIN).candidates = new List<CandidateBIN>();
-                        (geoResult as FindResultBIN).candidates.Add(candidate as CandidateBIN);
-                    }
+                    address = (result as BIN).buildingIdentificationNumber + ", " + (result as BIN).firstBoroughName;
+                    locType += " BIN";
                     break;
                 case "BlockFace":
                     lat = (result as BlockFace).latitude; // GeoClient BlockFace search does not return latitude/longitude
                     lon = (result as BlockFace).longitude;
-                    if (lat == 0 || lon == 0)
-                        this.nullResult = true;
-                    else
-                    {
-                        candidate = new CandidateBlockFace();
-                        candidate.score = 100;
-                        candidate.address = (result as BlockFace).firstStreetNameNormalized + ", " + (result as BlockFace).firstBoroughName;
-                        (candidate as CandidateBlockFace).attributes = (BlockFace)result;
-                        (candidate as CandidateBlockFace).attributes.Loc_name = "GeoClient BlockFace";
-                        candidate.location = ensureWebMeractor(lon, lat);
-                        geoResult = new FindResultBlockFace();
-                        geoResult.spatialReference = spatialReference;
-                        (geoResult as FindResultBlockFace).candidates = new List<CandidateBlockFace>();
-                        (geoResult as FindResultBlockFace).candidates.Add(candidate as CandidateBlockFace);
-                    }
+                    address = (result as BlockFace).firstStreetNameNormalized + ", " + (result as BlockFace).firstBoroughName;
+                    locType += " BlockFace";
                     break;
                 case "Address":
                     lat = (result as Address).latitude;
                     lon = (result as Address).longitude;
-                    if (lat == 0 || lon == 0)
-                        this.nullResult = true;
-                    else
-                    {
-                        candidate = new CandidateAddress();
-                        candidate.score = 100;
-                        candidate.address = (result as Address).houseNumber + " " + (result as Address).firstStreetNameNormalized + ", " + (result as Address).firstBoroughName;
-                        (candidate as CandidateAddress).attributes = (Address)result;
-                        (candidate as CandidateAddress).attributes.Loc_name = "GeoClient Address";
-                        candidate.location = ensureWebMeractor(lon, lat);
-                        geoResult = new FindResultAddress();
-                        geoResult.spatialReference = spatialReference;
-                        (geoResult as FindResultAddress).candidates = new List<CandidateAddress>();
-                        (geoResult as FindResultAddress).candidates.Add(candidate as CandidateAddress);
-                    }
+                    address = (result as Address).houseNumber + " " + (result as Address).firstStreetNameNormalized + ", " + (result as Address).firstBoroughName;
+                    locType += " Address";
                     break;
                 case "Intersection":
                     lat = (result as Intersection).latitude;
                     lon = (result as Intersection).longitude;
-                    if (lat == 0 || lon == 0)
-                        this.nullResult = true;
-                    else
-                    {
-                        candidate = new CandidateIntersection();
-                        candidate.score = 100;
-                        candidate.address = (result as Intersection).firstStreetNameNormalized + " and " + (result as Intersection).secondStreetNameNormalized + ", " + (result as Intersection).firstBoroughName;
-                        (candidate as CandidateIntersection).attributes = (Intersection)result;
-                        (candidate as CandidateIntersection).attributes.Loc_name = "GeoClient Intersection";
-                        candidate.location = ensureWebMeractor(lon, lat);
-                        geoResult = new FindResultIntersection();
-                        geoResult.spatialReference = spatialReference;
-                        (geoResult as FindResultIntersection).candidates = new List<CandidateIntersection>();
-                        (geoResult as FindResultIntersection).candidates.Add(candidate as CandidateIntersection);
-                    }
+                    address = (result as Intersection).firstStreetNameNormalized + " and " + (result as Intersection).secondStreetNameNormalized + ", " + (result as Intersection).firstBoroughName;
+                    locType += " Intersection";
                     break;
             }
 
-            if (this.nullResult)
+            if (lat == 0 || lon == 0)
             {
                 return "{error: {status:\"failed\", message: \"GeoClient does not return geographic coordinates for this search\"}}";
             }
             else
             {
-                MemoryStream mstream = new MemoryStream();
-                DataContractJsonSerializer ser2 = new DataContractJsonSerializer(geoResult.GetType());
-                ser2.WriteObject(mstream, geoResult);
+                Candidate candidate = new Candidate();
+                candidate.score = 100;
+                candidate.address = address;
+                dynamic attributes = new ExpandoObject();
+                attributes.Loc_name = locType;
+                Utils.CopyProperties(result, attributes);
+                candidate.attributes = attributes;
+                candidate.location = ensureWebMeractor(lon, lat);
+                GeocoderJsonResult geoResult = new GeocoderJsonResult();
+                geoResult.spatialReference = spatialReference;
+                geoResult.candidates = new List<Candidate>();
+                geoResult.candidates.Add(candidate);
 
-                mstream.Position = 0;
-                StreamReader sr = new StreamReader(mstream);
-                string json = sr.ReadToEnd();
+                //MemoryStream mstream = new MemoryStream();
+                //DataContractJsonSerializer ser2 = new DataContractJsonSerializer(geoResult.GetType());
+                //ser2.WriteObject(mstream, geoResult);
+
+                //mstream.Position = 0;
+                //StreamReader sr = new StreamReader(mstream);
+                //string json = sr.ReadToEnd();
+                string json = JsonConvert.SerializeObject(geoResult);
                 return json;
             }
         }
@@ -518,7 +454,7 @@ namespace GeoREST.Controllers
             double lat = 0, lon = 0;
             string locName = "", locType = "GeoClient";
 
-            ExplorerFindResult fResult = new ExplorerFindResult();
+            ExplorerJsonResult fResult = new ExplorerJsonResult();
             fResult.spatialReference = new SpatialReference();
             fResult.spatialReference.wkid = this.queryParams.outWkid;
             fResult.spatialReference.latestWkid = this.queryParams.outLatestWkid;
@@ -564,7 +500,9 @@ namespace GeoREST.Controllers
             }
 
             if (lat == 0 || lon == 0)
-                this.nullResult = true;
+            {
+                return "{error: {status:\"failed\", message: \"GeoClient does not return geographic coordinates for this search\"}}";
+            }
             else
             {
                 CandidateLocation location = new CandidateLocation();
@@ -581,29 +519,24 @@ namespace GeoREST.Controllers
                 location.extent.ymin = (this.queryParams.outWkid == 4326) ? (geo.y - 0.001) : (geo.y - 130);
                 location.extent.ymax = (this.queryParams.outWkid == 4326) ? (geo.y + 0.001) : (geo.y + 130);
 
-                Attributes attr = new Attributes();
-                attr.Addr_Type = locType;
+                dynamic attr = new ExpandoObject();
                 attr.score = 100;
+                attr.Addr_Type = locType;
+                Utils.CopyProperties(found, attr);
                 location.feature.attributes = attr;
 
                 fResult.locations = new List<CandidateLocation>();
                 fResult.locations.Add(location);
-            }
 
-            if (this.nullResult)
-            {
-                return "{error: {status:\"failed\", message: \"GeoClient does not return geographic coordinates for this search\"}}";
-            }
-            else
-            {
-                MemoryStream mstream = new MemoryStream();
-                DataContractJsonSerializer ser2 = new DataContractJsonSerializer(typeof(ExplorerFindResult));
-                ser2.WriteObject(mstream, fResult);
+                //MemoryStream mstream = new MemoryStream();
+                //DataContractJsonSerializer ser2 = new DataContractJsonSerializer(typeof(ExplorerJsonResult));
+                //ser2.WriteObject(mstream, fResult);
 
-                mstream.Position = 0;
-                StreamReader sr = new StreamReader(mstream);
-                string result = sr.ReadToEnd();
-                return result;
+                //mstream.Position = 0;
+                //StreamReader sr = new StreamReader(mstream);
+                //string result = sr.ReadToEnd();
+                string json = JsonConvert.SerializeObject(fResult);
+                return json;
             }
         }
         #endregion
@@ -841,8 +774,6 @@ namespace GeoREST.Controllers
     #region Other Geocoding Result Objects
     public class Place
     {
-        public string Loc_name { get; set; }
-
         public string assemblyDistrict { get; set; }
         //public string attributeBytes { get; set; }
         public string bbl { get; set; }
@@ -1023,8 +954,6 @@ namespace GeoREST.Controllers
 
     public class BBL
     {
-        public string Loc_name { get; set; }
-
         public string bbl { get; set; }
         public string bblBoroughCode { get; set; }
         public string bblBoroughCodeIn { get; set; }
@@ -1082,13 +1011,10 @@ namespace GeoREST.Controllers
     public class BBLResult
     {
         public BBL bbl { get; set; }
-
     }
 
     public class BIN
     {
-        public string Loc_name { get; set; }
-
         public string bbl { get; set; }
         public string bblBoroughCode { get; set; }
         public string bblTaxBlock { get; set; }
@@ -1164,7 +1090,6 @@ namespace GeoREST.Controllers
 
     public class BlockFace
     {
-        public string Loc_name { get; set; }
         public double latitude { get; set; }
         public double longitude { get; set; }
 
@@ -1288,8 +1213,6 @@ namespace GeoREST.Controllers
 
     public class Address
     {
-        public string Loc_name { get; set; }
-
         public string assemblyDistrict { get; set; }
         public string bbl { get; set; }
         public string bblBoroughCode { get; set; }
@@ -1435,8 +1358,6 @@ namespace GeoREST.Controllers
 
     public class Intersection
     {
-        public string Loc_name { get; set; }
-
         public string assemblyDistrict { get; set; }
         public string boroughCode1In { get; set; }
         public string censusTract1990 { get; set; }
@@ -1528,6 +1449,7 @@ namespace GeoREST.Controllers
         public int score { get; set; }
         public string address { get; set; }
         public Geometry location { get; set; }
+        public ExpandoObject attributes { get; set; }
 
         public Candidate()
         {
@@ -1535,70 +1457,12 @@ namespace GeoREST.Controllers
         }
     }
 
-    public class CandidatePlace : Candidate
-    {
-        public Place attributes { get; set; }
-    }
-
-    public class CandidateBBL : Candidate
-    {
-        public BBL attributes { get; set; }
-    }
-
-    public class CandidateBIN : Candidate
-    {
-        public BIN attributes { get; set; }
-    }
-
-    public class CandidateBlockFace : Candidate
-    {
-        public BlockFace attributes { get; set; }
-    }
-
-    public class CandidateAddress : Candidate
-    {
-        public Address attributes { get; set; }
-    }
-
-    public class CandidateIntersection : Candidate
-    {
-        public Intersection attributes { get; set; }
-    }
-
-    public class GeocoderFindResult
+    public class GeocoderJsonResult
     {
         public SpatialReference spatialReference { get; set; }
+        public List<Candidate> candidates { get; set; }
     }
 
-    public class FindResultPlace : GeocoderFindResult
-    {
-        public List<CandidatePlace> candidates { get; set; }
-    }
-
-    public class FindResultBBL : GeocoderFindResult
-    {
-        public List<CandidateBBL> candidates { get; set; }
-    }
-
-    public class FindResultBIN : GeocoderFindResult
-    {
-        public List<CandidateBIN> candidates { get; set; }
-    }
-
-    public class FindResultBlockFace : GeocoderFindResult
-    {
-        public List<CandidateBlockFace> candidates { get; set; }
-    }
-
-    public class FindResultAddress : GeocoderFindResult
-    {
-        public List<CandidateAddress> candidates { get; set; }
-    }
-
-    public class FindResultIntersection : GeocoderFindResult
-    {
-        public List<CandidateIntersection> candidates { get; set; }
-    }
 
     #region Added for Action - "find"
     public class Extent
@@ -1609,16 +1473,10 @@ namespace GeoREST.Controllers
         public double ymax { get; set; }
     }
 
-    public class Attributes
-    {
-        public int score { get; set; }
-        public string Addr_Type { get; set; }
-    }
-
     public class Feature
     {
         public Geometry geometry { get; set; }
-        public Attributes attributes { get; set; }
+        public ExpandoObject attributes { get; set; }
     }
 
     public class CandidateLocation
@@ -1628,7 +1486,7 @@ namespace GeoREST.Controllers
         public Feature feature { get; set; }
     }
 
-    public class ExplorerFindResult
+    public class ExplorerJsonResult
     {
         public SpatialReference spatialReference { get; set; }
         public List<CandidateLocation> locations { get; set; }
@@ -1842,7 +1700,7 @@ namespace GeoREST.Controllers
     }
     #endregion
 
-    static class ClassExtenions
+    static class Utils
     {
         public static Dictionary<string, string> toUpperKeyDictionary(this IEnumerable<KeyValuePair<string, string>> original)
         {
@@ -1854,7 +1712,20 @@ namespace GeoREST.Controllers
 
             return clone;
         }
-    }
 
+        public static void CopyProperties(object source, ExpandoObject target)
+        {
+            IDictionary<string, object> kvPairs = target;
+            var sourceProperties = source.GetType().GetProperties().Where(p => p.CanRead);
+
+            foreach (var property in sourceProperties)
+            {
+                if (property.CanRead && !kvPairs.ContainsKey(property.Name))
+                {
+                    kvPairs.Add(property.Name, property.GetValue(source, null));
+                }
+            }
+        }
+    }
 }
 
