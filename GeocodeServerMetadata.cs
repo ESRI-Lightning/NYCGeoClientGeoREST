@@ -64,7 +64,7 @@ namespace GeoREST
 
         public GeocodeServerMetadata()
         {
-          this.currentVersion = 10.2;
+          this.currentVersion = 10.5;
           this.serviceDescription = "NYC Geoclient";
           this.singleLineAddressField = new SingleLineAddressField();
           this.singleLineAddressField.name = "SingleLine";
@@ -93,8 +93,6 @@ namespace GeoREST
           this.locatorProperties.WriteReferenceIDField = "FALSE";
           this.locatorProperties.WritePercentAlongField = "FALSE";
           this.locatorProperties.UICLSID = "1234";
-
         }
-
     }
 }
