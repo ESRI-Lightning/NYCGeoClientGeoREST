@@ -3,20 +3,23 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Text;
 using System.Net.Http;
 using System.Runtime.Serialization.Json;
 using System.Web.Http;
 using System.Configuration;
 using System.Dynamic;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 
 namespace GeoREST.Controllers
 {
     public class GeocodeServerController : ApiController
     {
-        private QueryParams queryParams;
         private string GeoClientAPIURL = "https://api.cityofnewyork.us/geoclient/v1/";
-        //private bool nullResult = false;
+        private QueryParams queryParams = null;
         //private string format = "html";
 
         public GeocodeServerController()
@@ -24,10 +27,9 @@ namespace GeoREST.Controllers
             this.queryParams = new QueryParams();
         }
 
-        // GET api/GeocodeServer
+        // GET metadata - api/GeocodeServer 
         public HttpResponseMessage Get()
         {
-
             //check for format string
             var query = this.Request.GetQueryNameValuePairs();
 
@@ -84,178 +86,250 @@ namespace GeoREST.Controllers
         private string getHTMLPageGeocodeServer()
         {
             return "<a href='GeocodeServer/findAddressCandidates'>Find Address Candidates</a><br/>" +
+                   "<a href='GeocodeServer/geocodeAddresses'>Batch Geocoding</a><br/>" +
                    "<a href='GeocodeServer/find'>Search</a>";
         }
 
         [HttpGet]
         [ActionName("findAddressCandidates")]
-        public HttpResponseMessage execute()
+        public Task<HttpResponseMessage> geocodeAddress()
         {
-            return findCandidates("findAddressCandidates");
+            return startGeocoding("findAddressCandidates");
+        }
+
+        [HttpGet]
+        [ActionName("geocodeAddresses")]
+        public Task<HttpResponseMessage> geocodeAddresses()
+        {
+            return startGeocoding("batch");
         }
 
         [HttpGet]
         [ActionName("find")]
-        public HttpResponseMessage find()
+        public Task<HttpResponseMessage> find()
         {
-            return findCandidates("find");
+            return startGeocoding("find");
         }
 
-        #region Do Geocoding
-        public HttpResponseMessage findCandidates(string action)
+        #region Start Geocoding
+        public async Task<HttpResponseMessage> startGeocoding(string action)
         {
-            string errMsg = "";
-          
             var query = this.Request.GetQueryNameValuePairs();
             var q = this.Request.RequestUri;
+            int paramCount = 0;
 
-            if (query.Count() == 0)
-                errMsg = "{error: {status:\"rejected\", message: \"Your input query parameters are invalid\"}}";
-
-            if (query.Count() > 0)
+            #region Parse response format Parameter
+            var matches = query.Where(kv => kv.Key.ToLower() == "f");
+            if (matches.Count() > 0)
             {
-                #region Parse response format
-                //var matchesF = query.Where(kv => kv.Key.ToLower() == "f");
+                paramCount++;
+            }
+            #endregion
 
-                //this.format = "html";
-                //if (matchesF.Count() > 0)
-                //{
-                //    this.format = matchesF.First().Value.ToLower();
-                //    if (this.format.ToLower() != "html")
-                //        errMsg = errMsg = "{error: {status:\"rejected\", message: \"Invalid response format\"}}";
-                //}
-                #endregion
+            #region Parse callback
+            var matches1 = query.Where(kv => kv.Key.ToLower().IndexOf("callback") > -1);
+            if (matches1.Count() > 0)
+            {
+                paramCount++;
+                this.queryParams.callback = matches1.First().Value;
+            }
+            #endregion
 
-                #region Parse search parameters
+            #region Parse outSR
+            this.queryParams.outWkid = 4326;
+            this.queryParams.outLatestWkid = 4326;
 
-                Dictionary<string, string> d = query.toUpperKeyDictionary();
-
-                // Add MANHATTAN as default borough
-                if (!d.ContainsKey("BOROUGH") || string.IsNullOrEmpty(d["BOROUGH"])) d.Add("BOROUGH", "Manhattan");
-                this.queryParams.searchURL = "";
-
-                if (d.ContainsKey("NAME"))
+            var matches2 = query.Where(kv => kv.Key.ToUpper().IndexOf("OUTSR") > -1);
+            if (matches2.Count() > 0)
+            {
+                paramCount++;
+                string outSR = matches2.First().Value;
+                int wkid = 0, latestWkid = 0;
+                if (Int32.TryParse(outSR, out wkid))
                 {
-                    this.queryParams.searchObject = new PlaceSearch(d);
-                    this.queryParams.searchFile = "place.json";
-                }
-                else if (d.ContainsKey("HOUSENUMBER"))
-                {
-                    this.queryParams.searchObject = new AddressSearch(d);
-                    this.queryParams.searchFile = "address.json";
-                }
-                else if (d.ContainsKey("LOT"))
-                {
-                    this.queryParams.searchObject = new BBLSearch(d);
-                    this.queryParams.searchFile = "bbl.json";
-                }
-                else if (d.ContainsKey("BIN"))
-                {
-                    this.queryParams.searchObject = new BINSearch(d);
-                    this.queryParams.searchFile = "bin.json";
-                }
-                else if (d.ContainsKey("ONSTREET"))
-                {
-                    this.queryParams.searchObject = new BlockFaceSearch(d);
-                    this.queryParams.searchFile = "blockface.json";
-                }
-                else if (d.ContainsKey("CROSSSTREETTWO") && !d.ContainsKey("ONSTREET"))
-                {
-                    this.queryParams.searchObject = new IntersectionSearch(d);
-                    this.queryParams.searchFile = "intersection.json";
-                }
-                else if (d.ContainsKey("SINGLELINE"))
-                {
-                    this.queryParams.searchObject = new SingleInputSearch(d);
-                    this.queryParams.searchFile = "search.json";
-                }
-                else if (d.ContainsKey("TEXT"))
-                {
-                    this.queryParams.searchObject = new SingleInputSearch(d);
-                    this.queryParams.searchFile = "search.json";
+                    this.queryParams.outWkid = wkid;
+                    this.queryParams.outLatestWkid = (wkid == 102100) ? 3857 : wkid;
                 }
                 else
                 {
-                    this.queryParams._rawQuery = this.Request.RequestUri.Query.Remove(0, 1).Replace("\n", " ");
-                    this.queryParams.searchObject = new SingleInputSearch(d);
-                    this.queryParams.searchFile = "search.json";
-                    this.queryParams.searchURL = String.Format(this.GeoClientAPIURL + "{0}?input={1}", this.queryParams.searchFile, this.queryParams._rawQuery);
-                }
-
-                if (this.queryParams.searchURL == "")
-                {
-                    this.queryParams.searchURL = String.Format(this.GeoClientAPIURL + "{0}?{1}", this.queryParams.searchFile, this.queryParams.searchObject.getParametersURL());
-                }
-                #endregion
-
-                #region Parse outSR
-                this.queryParams.outWkid = 4326;
-                this.queryParams.outLatestWkid = 4326;
-
-                if (d.ContainsKey("OUTSR") && d["OUTSR"] != null)
-                {
-                    int wkid = 0, latestWkid = 0;
-                    if (Int32.TryParse(d["OUTSR"], out wkid))
+                    char[] separators = { ':', ',' };
+                    string sr = outSR.Replace("{", "").Replace("}", "").Replace("\"", "").Replace("'", "");
+                    string[] pairs = sr.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+                    for (int i = 0; i < pairs.Length; i++)
                     {
-                        this.queryParams.outWkid = wkid;
-                        this.queryParams.outLatestWkid = (wkid == 102100) ? 3857 : wkid;
+                        if (pairs[i] == "wkid")
+                            wkid = Int32.Parse(pairs[i + 1]);
+                        if (pairs[i] == "latestWkid")
+                            latestWkid = Int32.Parse(pairs[i + 1]);
                     }
-                    else
-                    {
-                        char[] separators = { ':', ',' };
-                        string sr = d["OUTSR"].Replace("{", "").Replace("}", "").Replace("\"","").Replace("'","");
-                        string[] pairs = sr.Split(separators, StringSplitOptions.RemoveEmptyEntries);
-                        for (int i = 0; i < pairs.Length; i++)
-                        {
-                            if (pairs[i] == "wkid")
-                                wkid = Int32.Parse(pairs[i+1]);
-                            if (pairs[i] == "latestWkid")
-                                latestWkid = Int32.Parse(pairs[i + 1]);
-                        }
 
-                        this.queryParams.outWkid = (wkid > 0) ? wkid : ((latestWkid > 0) ? latestWkid : 4326);
-                        this.queryParams.outLatestWkid = (latestWkid > 0) ? latestWkid : this.queryParams.outWkid;
-                    }
+                    this.queryParams.outWkid = (wkid > 0) ? wkid : ((latestWkid > 0) ? latestWkid : 4326);
+                    this.queryParams.outLatestWkid = (latestWkid > 0) ? latestWkid : this.queryParams.outWkid;
                 }
-                #endregion
-
-                #region Parse callback
-                var matches2 = query.Where(kv => kv.Key.ToLower().IndexOf("callback") > -1);
-                if (matches2.Count() > 0)
-                {
-                    this.queryParams.callback = matches2.First().Value;
-                }
-                #endregion
             }
+            #endregion
 
-            if (errMsg != "")
+            if (query.Count() <= paramCount)
             {
+                string errMsg = "{error: {status:\"rejected\", message: \"Sorry, no valid address parameters were found in the query.\"}}";
+
                 if (this.queryParams.callback != null) errMsg = this.queryParams.callback + "(" + errMsg + ");";
                 var responseMsg = new HttpResponseMessage(HttpStatusCode.BadRequest);
                 responseMsg.Content = new StringContent(errMsg, System.Text.Encoding.UTF8, "text/json");
                 return responseMsg;
             }
+            else if (action == "batch")
+            {
+                BatchAddresses batchAddresses = null;
+                var matches3 = query.Where(kv => kv.Key.ToUpper().IndexOf("ADDRESSES") > -1);
+                if (matches3.Count() > 0)
+                {
+                    string jsonAddresses = matches3.First().Value.ToLower();
+                    if (jsonAddresses != "")
+                    {
+                        using (MemoryStream jsonStream = new MemoryStream(Encoding.Unicode.GetBytes(jsonAddresses)))
+                        {
+                            DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(BatchAddresses));
+                            batchAddresses = (BatchAddresses)serializer.ReadObject(jsonStream);
+                        }
+                    }
+                }
+
+                return await batchGeocoding(action, batchAddresses);
+            }
             else
             {
-                return sendRequest(action);
+                Dictionary<string, string> d = query.toUpperKeyDictionary();
+                SearchParams searchParams = parseSearchParams(d);
+                object candidate = sendRequest(action, searchParams);
+
+                if (candidate is Candidate)
+                    return await serializeCandidates(candidate as Candidate);
+                else
+                    return await serializeFindResult(candidate as CandidateLocation);
             }
         }
 
-        private HttpResponseMessage sendRequest(string action)
+        public Task<HttpResponseMessage> batchGeocoding(string action, BatchAddresses addresses)
         {
-            string result = "";
+            string jsonResult = "";
 
-            if (!string.IsNullOrEmpty(this.queryParams.searchURL))
+            SpatialReference spatialReference = new SpatialReference();
+            spatialReference.wkid = this.queryParams.outWkid;
+            spatialReference.latestWkid = this.queryParams.outLatestWkid;
+
+            BatchGeocoderJsonResult bacthResult = new BatchGeocoderJsonResult();
+            bacthResult.spatialReference = spatialReference;
+            bacthResult.locations = new List<Candidate>();
+
+            if (addresses != null)
+            {
+                foreach (BatchRecord record in addresses.records)
+                {
+                    Dictionary<string, string> d = record.attributes.toUpperKeyDictionary();
+                    SearchParams searchParams = parseSearchParams(d);
+                    searchParams.objectID = d.ContainsKey("OBJECTID") ? d["OBJECTID"] : "0";
+
+                    object candidate = sendRequest(action, searchParams);
+                    bacthResult.locations.Add(candidate as Candidate);
+                }
+
+                jsonResult = JsonConvert.SerializeObject(bacthResult);
+            }
+            else
+            {
+                jsonResult = "{error: {status:\"rejected\", message: \"Sorry, no address entries were found in the [addresses] query parameter.\"}}";
+            }
+
+            if (this.queryParams.callback != null) jsonResult = this.queryParams.callback + "(" + jsonResult + ");";
+            var responseMsg = new HttpResponseMessage(HttpStatusCode.OK);
+            responseMsg.Content = new StringContent(jsonResult, System.Text.Encoding.UTF8, "text/json");
+
+            return Task.FromResult(responseMsg);
+        }
+ 
+        private SearchParams parseSearchParams(Dictionary<string, string> d)
+        {
+            SearchParams searchParams = new SearchParams() { searchURL = "" };
+
+            // Add MANHATTAN as default borough
+            if (!d.ContainsKey("BOROUGH")) d.Add("BOROUGH", "Manhattan");
+
+            if (d.ContainsKey("NAME"))
+            {
+                searchParams.searchObject = new PlaceSearch(d);
+                searchParams.searchFile = "place.json";
+            }
+            else if (d.ContainsKey("HOUSENUMBER"))
+            {
+                searchParams.searchObject = new AddressSearch(d);
+                searchParams.searchFile = "address.json";
+            }
+            else if (d.ContainsKey("LOT"))
+            {
+                searchParams.searchObject = new BBLSearch(d);
+                searchParams.searchFile = "bbl.json";
+            }
+            else if (d.ContainsKey("BIN"))
+            {
+                searchParams.searchObject = new BINSearch(d);
+                searchParams.searchFile = "bin.json";
+            }
+            else if (d.ContainsKey("ONSTREET"))
+            {
+                searchParams.searchObject = new BlockFaceSearch(d);
+                searchParams.searchFile = "blockface.json";
+            }
+            else if (d.ContainsKey("CROSSSTREETTWO") && !d.ContainsKey("ONSTREET"))
+            {
+                searchParams.searchObject = new IntersectionSearch(d);
+                searchParams.searchFile = "intersection.json";
+            }
+            else if (d.ContainsKey("SINGLELINE"))
+            {
+                searchParams.searchObject = new SingleInputSearch(d);
+                searchParams.searchFile = "search.json";
+            }
+            else if (d.ContainsKey("TEXT"))
+            {
+                searchParams.searchObject = new SingleInputSearch(d);
+                searchParams.searchFile = "search.json";
+            }
+            else
+            {
+                searchParams._rawQuery = this.Request.RequestUri.Query.Remove(0, 1).Replace("\n", " ");
+                searchParams.searchObject = new SingleInputSearch(d);
+                searchParams.searchFile = "search.json";
+                searchParams.searchURL = String.Format(this.GeoClientAPIURL + "{0}?input={1}", searchParams.searchFile, searchParams._rawQuery);
+            }
+
+            if (searchParams.searchURL == "")
+            {
+                searchParams.searchURL = String.Format(this.GeoClientAPIURL + "{0}?{1}", searchParams.searchFile, searchParams.searchObject.getParametersURL());
+            }
+
+            return searchParams;
+        }
+        #endregion
+
+        #region Send Search Request to GeoSupport Geocoder
+        private object sendRequest(string action, SearchParams searchParams)
+        {
+            object result = null;
+
+            if (!string.IsNullOrEmpty(searchParams.searchURL))
             {
                 var appSettings = ConfigurationManager.AppSettings;
                 string sAuth = string.Format("&app_id={0}&app_key={1}", appSettings["app_id"], appSettings["app_key"]);
-                HttpWebRequest request = WebRequest.CreateHttp(this.queryParams.searchURL + sAuth);
-
+                HttpWebRequest request = WebRequest.CreateHttp(searchParams.searchURL + sAuth);
+                //RequestState myRequestState = new RequestState();
+                // The 'WebRequest' object is associated 
+                //request.BeginGetResponse()
                 using (HttpWebResponse response = request.GetResponse() as HttpWebResponse)
                 {
                     Stream responseStream = copyStream(response.GetResponseStream());
 
-                    if (this.queryParams.searchObject.GetType() == typeof(SingleInputSearch))
+                    if (searchParams.searchObject.GetType() == typeof(SingleInputSearch))
                     {
                         DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(SearchResponse));
                         SearchResponse searchResponse = (SearchResponse)serializer.ReadObject(responseStream);
@@ -275,80 +349,80 @@ namespace GeoREST.Controllers
                                 DataContractJsonSerializer serializer2 = new DataContractJsonSerializer(typeof(SearchResponsePlace));
                                 SearchResponsePlace response2 = (SearchResponsePlace)serializer2.ReadObject(responseStream);
                                 Place place = response2.results[0].response;
-                                result = (action == "find") ? serializeFindResult(place) : serializeCandidates(place);
+                                result = getLocationCandidate(place, searchParams.objectID, action);
                             }
                             else if (requestMatch.StartsWith("BBL"))
                             {
                                 DataContractJsonSerializer serializer2 = new DataContractJsonSerializer(typeof(SearchResponseBBL));
                                 SearchResponseBBL response2 = (SearchResponseBBL)serializer2.ReadObject(responseStream);
                                 BBL bbl = response2.results[0].response;
-                                result = (action == "find") ? serializeFindResult(bbl) : serializeCandidates(bbl);
+                                result = getLocationCandidate(bbl, searchParams.objectID, action);
                             }
                             else if (requestMatch.StartsWith("BIN"))
                             {
                                 DataContractJsonSerializer serializer2 = new DataContractJsonSerializer(typeof(SearchResponseBIN));
                                 SearchResponseBIN response2 = (SearchResponseBIN)serializer2.ReadObject(responseStream);
                                 BIN bin = response2.results[0].response;
-                                result = (action == "find") ? serializeFindResult(bin) : serializeCandidates(bin);
+                                result = getLocationCandidate(bin, searchParams.objectID, action);
                             }
                             else if (requestMatch.StartsWith("BLOCKFACE"))
                             {
                                 DataContractJsonSerializer serializer2 = new DataContractJsonSerializer(typeof(SearchResponseBlockFace));
                                 SearchResponseBlockFace response2 = (SearchResponseBlockFace)serializer2.ReadObject(responseStream);
                                 BlockFace blockface = response2.results[0].response;
-                                result = (action == "find") ? serializeFindResult(blockface) : serializeCandidates(blockface);
+                                result = getLocationCandidate(blockface, searchParams.objectID, action);
                             }
                             else if (requestMatch.StartsWith("INTERSECTION"))
                             {
                                 DataContractJsonSerializer serializer2 = new DataContractJsonSerializer(typeof(SearchResponseIntersection));
                                 SearchResponseIntersection response2 = (SearchResponseIntersection)serializer2.ReadObject(responseStream);
                                 Intersection intersect = response2.results[0].response;
-                                result = (action == "find") ? serializeFindResult(intersect) : serializeCandidates(intersect);
+                                result = getLocationCandidate(intersect, searchParams.objectID, action);
                             }
                             else if (requestMatch.StartsWith("ADDRESS"))
                             {
                                 DataContractJsonSerializer serializer2 = new DataContractJsonSerializer(typeof(SearchResponseAddress));
                                 SearchResponseAddress response2 = (SearchResponseAddress)serializer2.ReadObject(responseStream);
                                 Address address = response2.results[0].response;
-                                result = (action == "find") ? serializeFindResult(address) : serializeCandidates(address);
+                                result = getLocationCandidate(address, searchParams.objectID, action);
                             }
                         }
                     }
-                    else if (this.queryParams.searchObject.GetType() == typeof(PlaceSearch))
+                    else if (searchParams.searchObject.GetType() == typeof(PlaceSearch))
                     {
                         DataContractJsonSerializer placeSerializer = new DataContractJsonSerializer(typeof(PlaceResult));
                         PlaceResult placeResult = (PlaceResult)placeSerializer.ReadObject(responseStream);
-                        result = (action == "find") ? serializeFindResult(placeResult.place) : serializeCandidates(placeResult.place);
+                        result = getLocationCandidate(placeResult.place, searchParams.objectID, action);
                     }
-                    else if (this.queryParams.searchObject.GetType() == typeof(BBLSearch))
+                    else if (searchParams.searchObject.GetType() == typeof(BBLSearch))
                     {
                         DataContractJsonSerializer BBLSerializer = new DataContractJsonSerializer(typeof(BBLResult));
                         BBLResult bblResult = (BBLResult)BBLSerializer.ReadObject(responseStream);
-                        result = (action == "find") ? serializeFindResult(bblResult.bbl) : serializeCandidates(bblResult.bbl);
+                        result = getLocationCandidate(bblResult.bbl, searchParams.objectID, action);
                     }
-                    else if (this.queryParams.searchObject.GetType() == typeof(BINSearch))
+                    else if (searchParams.searchObject.GetType() == typeof(BINSearch))
                     {
                         DataContractJsonSerializer BinSerializer = new DataContractJsonSerializer(typeof(BINResult));
                         BINResult binResult = (BINResult)BinSerializer.ReadObject(responseStream);
-                        result = (action == "find") ? serializeFindResult(binResult.bin) : serializeCandidates(binResult.bin);
+                        result = getLocationCandidate(binResult.bin, searchParams.objectID, action);
                     }
-                    else if (this.queryParams.searchObject.GetType() == typeof(BlockFaceSearch))
+                    else if (searchParams.searchObject.GetType() == typeof(BlockFaceSearch))
                     {
                         DataContractJsonSerializer BlockFaceSerializer = new DataContractJsonSerializer(typeof(BlockFaceResult));
                         BlockFaceResult blockFaceResult = (BlockFaceResult)BlockFaceSerializer.ReadObject(responseStream);
-                        result = (action == "find") ? serializeFindResult(blockFaceResult.blockface) : serializeCandidates(blockFaceResult.blockface);
+                        result = getLocationCandidate(blockFaceResult.blockface, searchParams.objectID, action);
                     }
-                    else if (this.queryParams.searchObject.GetType() == typeof(IntersectionSearch))
+                    else if (searchParams.searchObject.GetType() == typeof(IntersectionSearch))
                     {
                         DataContractJsonSerializer IntersectionSerializer = new DataContractJsonSerializer(typeof(IntersectionResult));
                         IntersectionResult intersectionResult = (IntersectionResult)IntersectionSerializer.ReadObject(responseStream);
-                        result = (action == "find") ? serializeFindResult(intersectionResult.intersection) : serializeCandidates(intersectionResult.intersection);
+                        result = getLocationCandidate(intersectionResult.intersection, searchParams.objectID, action);
                     }
-                    else if (this.queryParams.searchObject.GetType() == typeof(AddressSearch))
+                    else if (searchParams.searchObject.GetType() == typeof(AddressSearch))
                     {
                         DataContractJsonSerializer addressSerializer = new DataContractJsonSerializer(typeof(AddressResult));
                         AddressResult addressResult = (AddressResult)addressSerializer.ReadObject(responseStream);
-                        result = (action == "find") ? serializeFindResult(addressResult.address) : serializeCandidates(addressResult.address);
+                        result = getLocationCandidate(addressResult.address, searchParams.objectID, action);
                     }
                     else
                     {
@@ -358,23 +432,14 @@ namespace GeoREST.Controllers
                 }
             }
 
-            if (this.queryParams.callback != null) result = this.queryParams.callback + "(" + result + ");";
-            var responseMsg = new HttpResponseMessage(HttpStatusCode.OK);
-
-            responseMsg.Content = new StringContent(result, System.Text.Encoding.UTF8, "text/json");
-            return responseMsg;
+            return result;
         }
-        #endregion
-
-        #region serialize results into JSON - for "findAddressCandidates" operation
-        private string serializeCandidates(object result)
-        {
+ 
+        // Return Candidate or LocationCandidate
+        private object getLocationCandidate(object result, string objectID, string action)
+        { 
             double lat = 0, lon = 0;
             string address = "", locType = "GeoClient";
-
-            SpatialReference spatialReference = new SpatialReference();
-            spatialReference.wkid = this.queryParams.outWkid;
-            spatialReference.latestWkid = this.queryParams.outLatestWkid;
 
             switch (result.GetType().Name)
             {
@@ -418,22 +483,79 @@ namespace GeoREST.Controllers
 
             if (lat == 0 || lon == 0)
             {
-                return "{error: {status:\"failed\", message: \"GeoClient does not return geographic coordinates for this search\"}}";
+                return null;
+            }
+            else if (action == "find")
+            {
+                CandidateLocation candidate1 = new CandidateLocation();
+                candidate1.name = address;
+                candidate1.extent = new Extent();
+                candidate1.feature = new Feature();
+
+                //get WebMercator
+                Geometry geo = ensureWebMeractor(lon, lat);
+                candidate1.feature.geometry = geo;
+
+                candidate1.extent.xmin = (this.queryParams.outWkid == 4326) ? (geo.x - 0.001) : (geo.x - 110);
+                candidate1.extent.xmax = (this.queryParams.outWkid == 4326) ? (geo.x + 0.001) : (geo.x + 110);
+                candidate1.extent.ymin = (this.queryParams.outWkid == 4326) ? (geo.y - 0.001) : (geo.y - 130);
+                candidate1.extent.ymax = (this.queryParams.outWkid == 4326) ? (geo.y + 0.001) : (geo.y + 130);
+
+                dynamic attr = new ExpandoObject();
+                attr.score = 100;
+                attr.Addr_type = locType;
+                Utils.CopyProperties(result, attr);
+                candidate1.feature.attributes = attr;
+
+                return candidate1;
             }
             else
             {
                 Candidate candidate = new Candidate();
                 candidate.score = 100;
                 candidate.address = address;
+
                 dynamic attributes = new ExpandoObject();
                 attributes.Loc_name = locType;
+
+                if (action == "batch")
+                {
+                    attributes.Match_addr = address;
+                    attributes.OBJECTID = Int32.Parse(objectID);
+                }
+
                 Utils.CopyProperties(result, attributes);
                 candidate.attributes = attributes;
                 candidate.location = ensureWebMeractor(lon, lat);
-                GeocoderJsonResult geoResult = new GeocoderJsonResult();
+      
+                return candidate;
+            }
+        }
+        #endregion
+
+        #region serialize results into JSON - for "findAddressCandidates" operation
+        private Task<HttpResponseMessage> serializeCandidates(object candidate)
+        {
+            string jsonResult = "";
+
+            if (candidate == null)
+            {
+                jsonResult = "{error: {status:\"failed\", message: \"GeoClient does not return geographic coordinates for this search\"}}";
+            }
+            else if (candidate is string)
+            {
+                jsonResult = candidate as string;
+            }
+            else if (candidate is Candidate)
+            {
+                SpatialReference spatialReference = new SpatialReference();
+                spatialReference.wkid = this.queryParams.outWkid;
+                spatialReference.latestWkid = this.queryParams.outLatestWkid;
+
+                ArcGISGeocoderJsonResult geoResult = new ArcGISGeocoderJsonResult();
                 geoResult.spatialReference = spatialReference;
                 geoResult.candidates = new List<Candidate>();
-                geoResult.candidates.Add(candidate);
+                geoResult.candidates.Add(candidate as Candidate);
 
                 //MemoryStream mstream = new MemoryStream();
                 //DataContractJsonSerializer ser2 = new DataContractJsonSerializer(geoResult.GetType());
@@ -441,92 +563,40 @@ namespace GeoREST.Controllers
 
                 //mstream.Position = 0;
                 //StreamReader sr = new StreamReader(mstream);
-                //string json = sr.ReadToEnd();
-                string json = JsonConvert.SerializeObject(geoResult);
-                return json;
+                //jsonResult = sr.ReadToEnd();
+                jsonResult = JsonConvert.SerializeObject(geoResult);
             }
+
+            if (this.queryParams.callback != null) jsonResult = this.queryParams.callback + "(" + jsonResult + ");";
+            var responseMsg = new HttpResponseMessage(HttpStatusCode.OK);
+
+            responseMsg.Content = new StringContent(jsonResult, System.Text.Encoding.UTF8, "text/json");
+            return Task.FromResult(responseMsg);
         }
         #endregion
 
         #region serialize results into JSON - for "find" operation
-        private string serializeFindResult(object found)
+        private Task<HttpResponseMessage> serializeFindResult(object candidate)
         {
-            double lat = 0, lon = 0;
-            string locName = "", locType = "GeoClient";
+            string jsonResult = "";
 
-            ExplorerJsonResult fResult = new ExplorerJsonResult();
-            fResult.spatialReference = new SpatialReference();
-            fResult.spatialReference.wkid = this.queryParams.outWkid;
-            fResult.spatialReference.latestWkid = this.queryParams.outLatestWkid;
-
-            switch (found.GetType().Name)
+            if (candidate == null)
             {
-                case "Place":
-                    lat = (found as Place).latitude;
-                    lon = (found as Place).longitude;
-                    locName = (found as Place).firstStreetNameNormalized + ", " + (found as Place).firstBoroughName;
-                    locType += " Place";
-                    break;
-                case "BBL":
-                    lat = (found as BBL).latitudeInternalLabel;
-                    lon = (found as BBL).longitudeInternalLabel;
-                    locName = (found as BBL).bbl + ", " + (found as BBL).firstBoroughName;
-                    locType += " BBL";
-                    break;
-                case "BIN":
-                    lat = (found as BIN).latitudeInternalLabel;
-                    lon = (found as BIN).longitudeInternalLabel;
-                    locName = (found as BIN).buildingIdentificationNumber + ", " + (found as BIN).firstBoroughName;
-                    locType += " BIN";
-                    break;
-                case "BlockFace":
-                    lat = (found as BlockFace).latitude;
-                    lon = (found as BlockFace).longitude;
-                    locName = (found as BlockFace).firstStreetNameNormalized + ", " + (found as BlockFace).firstBoroughName;
-                    locType += " BlockFace";
-                    break;
-                case "Intersection":
-                    lat = (found as Intersection).latitude;
-                    lon = (found as Intersection).longitude;
-                    locName = (found as Intersection).firstStreetNameNormalized + " and " + (found as Intersection).secondStreetNameNormalized + ", " + (found as Intersection).firstBoroughName;
-                    locType += " Intersection";
-                    break;
-                case "Address":
-                    lat = (found as Address).latitude;
-                    lon = (found as Address).longitude;
-                    locName = (found as Address).houseNumber + " " + (found as Address).firstStreetNameNormalized + ", " + (found as Address).firstBoroughName;
-                    locType += " Address";
-                    break;
+                jsonResult = "{error: {status:\"failed\", message: \"GeoClient does not return geographic coordinates for this search\"}}";
             }
-
-            if (lat == 0 || lon == 0)
+            else if (candidate is string)
             {
-                return "{error: {status:\"failed\", message: \"GeoClient does not return geographic coordinates for this search\"}}";
+                jsonResult = candidate as string;
             }
-            else
+            else if (candidate is CandidateLocation)
             {
-                CandidateLocation location = new CandidateLocation();
-                location.name = locName;
-                location.extent = new Extent();
-                location.feature = new Feature();
-
-                //get WebMercator
-                Geometry geo = ensureWebMeractor(lon, lat);
-                location.feature.geometry = geo;
-
-                location.extent.xmin = (this.queryParams.outWkid == 4326) ? (geo.x - 0.001) : (geo.x - 110);
-                location.extent.xmax = (this.queryParams.outWkid == 4326) ? (geo.x + 0.001) : (geo.x + 110);
-                location.extent.ymin = (this.queryParams.outWkid == 4326) ? (geo.y - 0.001) : (geo.y - 130);
-                location.extent.ymax = (this.queryParams.outWkid == 4326) ? (geo.y + 0.001) : (geo.y + 130);
-
-                dynamic attr = new ExpandoObject();
-                attr.score = 100;
-                attr.Addr_Type = locType;
-                Utils.CopyProperties(found, attr);
-                location.feature.attributes = attr;
+                ExplorerJsonResult fResult = new ExplorerJsonResult();
+                fResult.spatialReference = new SpatialReference();
+                fResult.spatialReference.wkid = this.queryParams.outWkid;
+                fResult.spatialReference.latestWkid = this.queryParams.outLatestWkid;
 
                 fResult.locations = new List<CandidateLocation>();
-                fResult.locations.Add(location);
+                fResult.locations.Add(candidate as CandidateLocation);
 
                 //MemoryStream mstream = new MemoryStream();
                 //DataContractJsonSerializer ser2 = new DataContractJsonSerializer(typeof(ExplorerJsonResult));
@@ -534,10 +604,15 @@ namespace GeoREST.Controllers
 
                 //mstream.Position = 0;
                 //StreamReader sr = new StreamReader(mstream);
-                //string result = sr.ReadToEnd();
-                string json = JsonConvert.SerializeObject(fResult);
-                return json;
+                //jsonResult = sr.ReadToEnd();
+                jsonResult = JsonConvert.SerializeObject(fResult);
             }
+
+            if (this.queryParams.callback != null) jsonResult = this.queryParams.callback + "(" + jsonResult + ");";
+            var responseMsg = new HttpResponseMessage(HttpStatusCode.OK);
+
+            responseMsg.Content = new StringContent(jsonResult, System.Text.Encoding.UTF8, "text/json");
+            return Task.FromResult(responseMsg);
         }
         #endregion
 
@@ -603,58 +678,52 @@ namespace GeoREST.Controllers
             return g;
         }
 
+        /* Unused
         private Dictionary<string, string> doParse(string s)
         {
             Dictionary<string, string> d = new Dictionary<string, string>();
 
-            try
+            //C# code challenge.  Break this free text into key value pairs of some sort:
+
+            //Name:boston housenumber:314 street:west 100 st bin:2123 block:110 place:empire state building
+
+            //Name | boston
+            //Housenumber | 314
+            //Street | west 100 st
+            //Bin | 2123
+            //Block |110
+            //Place | empire state building
+
+            //string s = "Name:boston housenumber:314 street:west 100 st bin:2123 block:110 place:empire state building";
+            char sChar = ' ';
+            char cChar = ':';
+            string[] sa = s.Split(sChar);
+            string sKey = null;
+            string sVal = "";
+            foreach (string elm in sa)
             {
-                //C# code challenge.  Break this free text into key value pairs of some sort:
-
-                //Name:boston housenumber:314 street:west 100 st bin:2123 block:110 place:empire state building
-
-                //Name | boston
-                //Housenumber | 314
-                //Street | west 100 st
-                //Bin | 2123
-                //Block |110
-                //Place | empire state building
-
-
-                //string s = "Name:boston housenumber:314 street:west 100 st bin:2123 block:110 place:empire state building";
-                char sChar = ' ';
-                char cChar = ':';
-                string[] sa = s.Split(sChar);
-                string sKey = null;
-                string sVal = "";
-                foreach (string elm in sa)
+                if (elm.Contains(":"))
                 {
-                    if (elm.Contains(":"))
+                    if (sKey != null)
                     {
-                        if (sKey != null)
-                        {
-                            d.Add(sKey, sVal.Trim());
-                            sVal = "";
-                        }
+                        d.Add(sKey, sVal.Trim());
+                        sVal = "";
+                    }
 
-                        sKey = elm.Split(cChar)[0];
-                        sVal += " " + elm.Split(cChar)[1];
-                    }
-                    else
-                    {
-                        sVal += " " + elm;
-                    }
+                    sKey = elm.Split(cChar)[0];
+                    sVal += " " + elm.Split(cChar)[1];
                 }
-
-                d.Add(sKey, sVal.Trim());
+                else
+                {
+                    sVal += " " + elm;
+                }
             }
-            catch (Exception ex)
-            {
 
-            }
+            d.Add(sKey, sVal.Trim());
 
             return d;
         }
+        */
 
         private static Stream copyStream(Stream st)
         {
@@ -694,6 +763,44 @@ namespace GeoREST.Controllers
         {
         }
     }
+
+    #region Batch Geocoding Input Object
+    public class BatchAddresses
+    {
+        public BatchRecord[] records { get; set; }
+    }
+
+    public class BatchRecord
+    {
+        public BatchAttributes attributes { get; set; }
+    }
+
+    public class BatchAttributes
+    {
+        public int objectid { get; set; }
+        public string name { get; set; }
+        public string housenumber { get; set; }
+        public string street { get; set; }
+        public string borough { get; set; }
+        public string zip { get; set; }
+        public string block { get; set; }
+        public string lot { get; set; }
+        public string bin { get; set; }
+        public string onstreet { get; set; }
+        public string crossstreetone { get; set; }
+        public string crossstreettwo { get; set; }
+        public string boroughcrossstreetone { get; set; }
+        public string boroughcrossstreettwo { get; set; }
+        public string compassdirection { get; set; }
+        public string singleline { get; set; }
+    }
+
+    public class BatchGeocoderJsonResult
+    {
+        public SpatialReference spatialReference { get; set; }
+        public List<Candidate> locations { get; set; }
+    }
+    #endregion
 
     #region Single Field Search Result Objects
     public class SearchResponse
@@ -771,7 +878,7 @@ namespace GeoREST.Controllers
     }
     #endregion
 
-    #region Other Geocoding Result Objects
+    #region GeoSupport Geocoding Result Objects
     public class Place
     {
         public string assemblyDistrict { get; set; }
@@ -1425,7 +1532,9 @@ namespace GeoREST.Controllers
     {
         public Intersection intersection { get; set; }
     }
+    #endregion
 
+    #region ArcGIS Locator Result Objects for Serialization
     public class SpatialReference
     {
         public int wkid { get; set; }
@@ -1457,14 +1566,14 @@ namespace GeoREST.Controllers
         }
     }
 
-    public class GeocoderJsonResult
+    public class ArcGISGeocoderJsonResult
     {
         public SpatialReference spatialReference { get; set; }
         public List<Candidate> candidates { get; set; }
     }
+    #endregion
 
-
-    #region Added for Action - "find"
+    #region Result classes for "find" operation
     public class Extent
     {
         public double xmin { get; set; }
@@ -1492,20 +1601,22 @@ namespace GeoREST.Controllers
         public List<CandidateLocation> locations { get; set; }
     }
     #endregion
-    #endregion
 
     #region Search Parameter Objects
     public class QueryParams
     {
-        public string _rawQuery { get; set; }
-        public string queryString { get; set; }
         public string callback { get; set; }
         public int outWkid { get; set; }
         public int outLatestWkid { get; set; }
+    }
 
-        public string searchField { get; set; }
+    public class SearchParams
+    {
+        public string _rawQuery { get; set; }
+        public string objectID { get; set; }
         public string searchURL { get; set; }
         public string searchFile { get; set; }
+        public string searchField { get; set; }
 
         public IGeoSearch searchObject { get; set; }
     }
@@ -1527,8 +1638,8 @@ namespace GeoREST.Controllers
             this.zip = "";
             this.borough = d["BOROUGH"]; ;
 
-            if (d.ContainsKey("NAME") && d["NAME"] != null) this.name = d["NAME"];
-            if (d.ContainsKey("ZIP") && d["ZIP"] != null) this.zip = d["ZIP"];
+            if (d.ContainsKey("NAME")) this.name = d["NAME"];
+            if (d.ContainsKey("ZIP")) this.zip = d["ZIP"];
         }
 
         public string getParametersURL()
@@ -1555,9 +1666,9 @@ namespace GeoREST.Controllers
             this.zip = "";
             this.borough = d["BOROUGH"];
 
-            if (d.ContainsKey("HOUSENUMBER") && d["HOUSENUMBER"] != null) this.houseNumber = d["HOUSENUMBER"];
-            if (d.ContainsKey("STREET") && d["STREET"] != null) this.street = d["STREET"];
-            if (d.ContainsKey("ZIP") && d["ZIP"] != null) this.zip = d["ZIP"];
+            if (d.ContainsKey("HOUSENUMBER")) this.houseNumber = d["HOUSENUMBER"];
+            if (d.ContainsKey("STREET")) this.street = d["STREET"];
+            if (d.ContainsKey("ZIP")) this.zip = d["ZIP"];
         }
 
         public string getParametersURL()
@@ -1582,8 +1693,8 @@ namespace GeoREST.Controllers
             this.lot = "";
             this.borough = d["BOROUGH"]; ;
 
-            if (d.ContainsKey("BLOCK") && d["BLOCK"] != null) this.block = d["BLOCK"];
-            if (d.ContainsKey("LOT") && d["LOT"] != null) this.lot = d["LOT"];
+            if (d.ContainsKey("BLOCK")) this.block = d["BLOCK"];
+            if (d.ContainsKey("LOT")) this.lot = d["LOT"];
         }
 
         public string getParametersURL()
@@ -1602,7 +1713,7 @@ namespace GeoREST.Controllers
         {
             this.bin = "";
 
-            if (d.ContainsKey("BIN") && d["BIN"] != null) this.bin = d["BIN"];
+            if (d.ContainsKey("BIN") ) this.bin = d["BIN"];
         }
 
         public string getParametersURL()
@@ -1629,13 +1740,13 @@ namespace GeoREST.Controllers
             this.crossStreetTwo = "";
             this.borough = d["BOROUGH"];
 
-            if (d.ContainsKey("ONSTREET") && d["ONSTREET"] != null) this.onStreet = d["ONSTREET"];
-            if (d.ContainsKey("CROSSSTREETONE") && d["CROSSSTREETONE"] != null) this.crossStreetOne = d["CROSSSTREETONE"];
-            if (d.ContainsKey("CROSSSTREETTWO") && d["CROSSSTREETTWO"] != null) this.crossStreetTwo = d["CROSSSTREETTWO"];
+            if (d.ContainsKey("ONSTREET")) this.onStreet = d["ONSTREET"];
+            if (d.ContainsKey("CROSSSTREETONE")) this.crossStreetOne = d["CROSSSTREETONE"];
+            if (d.ContainsKey("CROSSSTREETTWO")) this.crossStreetTwo = d["CROSSSTREETTWO"];
 
-            if (d.ContainsKey("BOROUGHCROSSSTREETONE") && d["BOROUGHCROSSSTREETONE"] != null) this.boroughCrossStreetOne = d["BOROUGHCROSSSTREETONE"];
-            if (d.ContainsKey("BOROUGHCROSSSTREETTWO") && d["BOROUGHCROSSSTREETTWO"] != null) this.boroughCrossStreetTwo = d["BOROUGHCROSSSTREETTWO"];
-            if (d.ContainsKey("COMPASSDIRECTION") && d["COMPASSDIRECTION"] != null) this.compassDirection = d["COMPASSDIRECTION"];
+            if (d.ContainsKey("BOROUGHCROSSSTREETONE")) this.boroughCrossStreetOne = d["BOROUGHCROSSSTREETONE"];
+            if (d.ContainsKey("BOROUGHCROSSSTREETTWO")) this.boroughCrossStreetTwo = d["BOROUGHCROSSSTREETTWO"];
+            if (d.ContainsKey("COMPASSDIRECTION")) this.compassDirection = d["COMPASSDIRECTION"];
         }
 
         public string getParametersURL()
@@ -1663,11 +1774,11 @@ namespace GeoREST.Controllers
             this.crossStreetTwo = "";
             this.borough = "";
 
-            if (d.ContainsKey("CROSSSTREETONE") && d["CROSSSTREETONE"] != null) this.crossStreetOne = d["CROSSSTREETONE"];
-            if (d.ContainsKey("CROSSSTREETTWO") && d["CROSSSTREETTWO"] != null) this.crossStreetTwo = d["CROSSSTREETTWO"];
-            if (d.ContainsKey("BOROUGHCROSSSTREETTWO") && d["BOROUGHCROSSSTREETTWO"] != null) this.boroughCrossStreetTwo = d["BOROUGHCROSSSTREETTWO"];
-            if (d.ContainsKey("COMPASSDIRECTION") && d["COMPASSDIRECTION"] != null) this.compassDirection = d["COMPASSDIRECTION"];
-            if (d.ContainsKey("BOROUGH") && d["BOROUGH"] != null) this.borough = d["BOROUGH"];
+            if (d.ContainsKey("CROSSSTREETONE")) this.crossStreetOne = d["CROSSSTREETONE"];
+            if (d.ContainsKey("CROSSSTREETTWO")) this.crossStreetTwo = d["CROSSSTREETTWO"];
+            if (d.ContainsKey("BOROUGHCROSSSTREETTWO")) this.boroughCrossStreetTwo = d["BOROUGHCROSSSTREETTWO"];
+            if (d.ContainsKey("COMPASSDIRECTION")) this.compassDirection = d["COMPASSDIRECTION"];
+            if (d.ContainsKey("BOROUGH")) this.borough = d["BOROUGH"];
         }
 
         public string getParametersURL()
@@ -1688,8 +1799,8 @@ namespace GeoREST.Controllers
         {
             this.input = "";
 
-            if (d.ContainsKey("TEXT") && d["TEXT"] != null) this.input = d["TEXT"];
-            if (d.ContainsKey("SINGLELINE") && d["SINGLELINE"] != null) this.input = d["SINGLELINE"];
+            if (d.ContainsKey("TEXT")) this.input = d["TEXT"];
+            if (d.ContainsKey("SINGLELINE")) this.input = d["SINGLELINE"];
         }
 
         public string getParametersURL()
@@ -1702,12 +1813,30 @@ namespace GeoREST.Controllers
 
     static class Utils
     {
+        public static Dictionary<string, string> toUpperKeyDictionary(this BatchAttributes original)
+        {
+            Dictionary<string, string> clone = new Dictionary<string, string>();
+            foreach (PropertyInfo property in original.GetType().GetProperties())
+            {
+                var value = property.GetValue(original);
+                if (value != null)
+                {
+                    clone.Add(property.Name.ToUpper(), value.ToString());
+                }
+            }
+
+            return clone;
+        }
+
         public static Dictionary<string, string> toUpperKeyDictionary(this IEnumerable<KeyValuePair<string, string>> original)
         {
             Dictionary<string, string> clone = new Dictionary<string, string>();
             foreach (KeyValuePair<string, string> kv in original)
             {
-                clone.Add(kv.Key.ToUpper(), kv.Value);
+                if (!string.IsNullOrEmpty(kv.Value))
+                {
+                    clone.Add(kv.Key.ToUpper(), kv.Value);
+                }
             }
 
             return clone;
