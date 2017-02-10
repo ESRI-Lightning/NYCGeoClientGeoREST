@@ -113,7 +113,7 @@ namespace GeoREST
             this.locatorProperties.UICLSID = "1234";
 
             this.countries.Add("US");
-            this.capabilities = "Geocode,BatchGeocode";
+            this.capabilities = "Geocode,BatchGeocode,Suggestions";
         }
     }
 }
