@@ -79,13 +79,13 @@ namespace GeoREST
             this.countries.Add("US");
 
             this.addressFields = new List<AddressField>();
-            this.addressFields.Add(new AddressField() { alias = "Place", required = true, length = 100, name = "Place", type = "esriFieldTypeString" });
-            this.addressFields.Add(new AddressField() { alias = "Address", required = true, length = 100, name = "Address", type = "esriFieldTypeString" });
-            this.addressFields.Add(new AddressField() { alias = "Borough", required = true, length = 16, name = "Borough", type = "esriFieldTypeString" });
-            this.addressFields.Add(new AddressField() { alias = "BBL", required = true, length = 20, name = "BBL", type = "esriFieldTypeString" });
-            this.addressFields.Add(new AddressField() { alias = "BIN", required = true, length = 20, name = "BIN", type = "esriFieldTypeString" });
-            this.addressFields.Add(new AddressField() { alias = "BlockFace", required = true, length = 40, name = "BBL", type = "esriFieldTypeString" });
-            this.addressFields.Add(new AddressField() { alias = "Intersection", required = true, length = 100, name = "Intersection", type = "esriFieldTypeString" });
+            this.addressFields.Add(new AddressField() { alias = "Place", required = false, length = 100, name = "Place", type = "esriFieldTypeString" });
+            this.addressFields.Add(new AddressField() { alias = "Address", required = false, length = 100, name = "Address", type = "esriFieldTypeString" });
+            this.addressFields.Add(new AddressField() { alias = "Borough", required = false, length = 16, name = "Borough", type = "esriFieldTypeString" });
+            this.addressFields.Add(new AddressField() { alias = "BBL", required = false, length = 20, name = "BBL", type = "esriFieldTypeString" });
+            this.addressFields.Add(new AddressField() { alias = "BIN", required = false, length = 20, name = "BIN", type = "esriFieldTypeString" });
+            this.addressFields.Add(new AddressField() { alias = "BlockFace", required = false, length = 40, name = "BBL", type = "esriFieldTypeString" });
+            this.addressFields.Add(new AddressField() { alias = "Intersection", required = false, length = 100, name = "Intersection", type = "esriFieldTypeString" });
 
             this.candidateFields = new List<CandidateField>();
             this.candidateFields.Add(new CandidateField() { name = "Loc_name", type = "esrifieldTypeString", alias = "Loc_name", required = false, length = 24 });
