@@ -10,7 +10,6 @@ using System.Web.Http;
 using System.Configuration;
 using System.Dynamic;
 using System.Reflection;
-using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 
@@ -67,20 +66,13 @@ namespace GeoREST.Controllers
                 resp.Content = new StringContent(result, System.Text.Encoding.UTF8, "text/json");
                 return resp;
             }
-
         }
 
         private string getJSONPageGeocodeServer()
         {
-            MemoryStream mstream = new MemoryStream();
-            DataContractJsonSerializer ser2 = new DataContractJsonSerializer(typeof(GeocodeServerMetadata));
-            ser2.WriteObject(mstream, new GeocodeServerMetadata());
+            string jsonMeta = JsonConvert.SerializeObject(new GeocodeServerMetadata());
 
-            mstream.Position = 0;
-            StreamReader sr = new StreamReader(mstream);
-            string result = sr.ReadToEnd();
-
-            return result;
+            return jsonMeta;
         }
 
         private string getHTMLPageGeocodeServer()
